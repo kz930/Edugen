@@ -76,6 +76,8 @@ export interface LessonBlueprint {
   practiceGoals?: string[];
 }
 
+export type SlideContentKind = "bullets" | "code" | "diagram" | "mixed";
+
 export interface SlideContent {
   slideNumber: number;
   title: string;
@@ -84,6 +86,10 @@ export interface SlideContent {
   visualSuggestion: string;
   /** Optional alias used only in UI / manual data; generation uses `visualSuggestion`. */
   visualIdea?: string;
+  /** Literal source code for the slide (not a prose description). Prefer this over fenced prose in `visualSuggestion`. */
+  codeSnippet?: string;
+  /** Optional hint from generation; invalid code degrades to bullets during sanitization. */
+  contentType?: SlideContentKind;
   speakerNotes: string;
   sourceIds: string[];
 }

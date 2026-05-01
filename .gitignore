@@ -38,3 +38,7 @@ next-env.d.ts
 # Generated narration assets (keep public/generated/.gitkeep)
 public/generated/*.mp3
 public/generated/*.mp4
+public/generated/concat.txt
+
+# Large local Remotion experiment / bundle output
+/my-recursion-video/

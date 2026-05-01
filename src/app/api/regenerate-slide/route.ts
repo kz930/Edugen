@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import type { RetrievedSource, SlideContent } from "@/types/lesson";
+import { sanitizeSlideContent } from "@/lib/slide-code-snippet";
 
 export const runtime = "nodejs";
 
@@ -32,12 +33,13 @@ export async function POST(req: Request) {
       messages: [
         {
           role: "system",
-          content:
-            "You revise one lesson slide. Output JSON matching SlideContent shape only.",
+          content: `You revise one lesson slide. Output JSON matching SlideContent shape only.
+If the slide needs code, put the actual source in "codeSnippet" (raw code with \\n newlines). Never use a sentence like "Code snippet of…" — only real runnable code.
+Optional fields: "codeSnippet" (string), "contentType" ("bullets"|"code"|"diagram"|"mixed").`,
         },
         {
           role: "user",
-          content: `Topic: ${topic}\nLesson: ${lessonTitle}\nSlide number: ${slideNumber}\nNotes:\n${uploadedText}\nSources:\n${srcContext}\nReturn JSON: {"slideNumber": number, "title": string, "mainIdea": string, "bullets": string[], "visualSuggestion": string, "speakerNotes": string, "sourceIds": string[]}`,
+          content: `Topic: ${topic}\nLesson: ${lessonTitle}\nSlide number: ${slideNumber}\nNotes:\n${uploadedText}\nSources:\n${srcContext}\nReturn JSON: {"slideNumber": number, "title": string, "mainIdea": string, "bullets": string[], "visualSuggestion": string, "speakerNotes": string, "sourceIds": string[], "codeSnippet"?: string, "contentType"?: string}`,
         },
       ],
       temperature: 0.5,
@@ -48,7 +50,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Empty LLM response." }, { status: 502 });
     }
 
-    const slide = JSON.parse(raw) as SlideContent;
+    const slide = sanitizeSlideContent(
+      JSON.parse(raw) as SlideContent,
+      `regenerate slide ${slideNumber}`
+    );
     slide.slideNumber = slideNumber;
 
     return NextResponse.json({ slide });

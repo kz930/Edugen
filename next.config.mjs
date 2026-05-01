@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  transpilePackages: ["remotion", "@remotion/player"],
   experimental: {
     // Remotion bundler/renderer pull native bindings; avoid webpack parsing them for API routes.
     serverComponentsExternalPackages: [
@@ -9,7 +10,7 @@ const nextConfig = {
       "@remotion/studio-server",
       "@remotion/studio-shared",
       "@remotion/media-utils",
-      "remotion",
+      // `remotion` must NOT be listed here — it conflicts with `transpilePackages`.
       "esbuild",
       "@rspack/core",
     ],

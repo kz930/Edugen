@@ -1,87 +1,42 @@
 import type { SlideContent } from "@/types/lesson";
+import { getEffectiveCodeSnippet } from "@/lib/slide-code-snippet";
 
-/** Characters that break Mermaid `["…"]` labels — strip or replace */
-function cleanLabelText(s: string): string {
-  return s
-    .replace(/"/g, "'")
-    .replace(/\n/g, " ")
-    .replace(/#/g, "")
-    .replace(/[[\]]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+export type SlideVisualPlan =
+  | { type: "mermaid"; source: string }
+  | { type: "flow"; mode: "linear" | "comparison"; labels: string[] }
+  | { type: "none" };
+
+/**
+ * Same diagram decision path for editor preview and Remotion video.
+ * Alias of `getSlideVisualPlan` — one source of truth.
+ */
+export function buildDiagramPlan(slide: SlideContent): SlideVisualPlan {
+  return getSlideVisualPlan(slide);
 }
 
-/** Word-wrap for HTML labels (`<br/>`) so boxes are not ultra-narrow in two-column slides */
-function wrapForMermaidHtmlLabel(text: string, maxLen: number): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const next = cur ? `${cur} ${w}` : w;
-    if (next.length <= maxLen) {
-      cur = next;
-      continue;
-    }
-    if (cur) lines.push(cur);
-    if (lines.length >= 6) break;
-    cur = w.length > maxLen ? `${w.slice(0, maxLen - 1)}…` : w;
+/** Remotion video only supports animated flow (not Mermaid). */
+export type RemotionDiagramPlan =
+  | { type: "none" }
+  | { type: "flow"; mode: "linear" | "comparison"; labels: string[] };
+
+export function visualPlanToRemotionDiagram(plan: SlideVisualPlan): RemotionDiagramPlan {
+  if (plan.type === "flow") {
+    return { type: "flow", mode: plan.mode, labels: plan.labels };
   }
-  if (lines.length < 6 && cur) lines.push(cur);
-  return lines.join("<br/>");
-}
-
-function esc(s: string): string {
-  const cleaned = cleanLabelText(s);
-  const capped = cleaned.slice(0, 420);
-  const w = wrapForMermaidHtmlLabel(capped, 36);
-  return w || "…";
-}
-
-function linearFlowchart(bullets: string[]): string {
-  const b = bullets.slice(0, 8).filter(Boolean);
-  if (b.length === 0) return "";
-  const lines = ["flowchart TB"];
-  b.forEach((_, i) => {
-    lines.push(`  n${i}["${esc(b[i]!)}"]`);
-  });
-  for (let i = 0; i < b.length - 1; i++) {
-    lines.push(`  n${i} --> n${i + 1}`);
-  }
-  return lines.join("\n");
-}
-
-/** Two-column comparison inside an LR subgraph so labels are not clipped */
-function comparisonFlowchart(left: string, right: string): string {
-  const L = esc(left);
-  const R = esc(right);
-  return [
-    "flowchart TB",
-    "  subgraph row",
-    "    direction LR",
-    `    subgraph col1["First idea"]`,
-    "      direction TB",
-    `      nL["${L}"]`,
-    "    end",
-    `    subgraph col2["Second idea"]`,
-    "      direction TB",
-    `      nR["${R}"]`,
-    "    end",
-    "  end",
-  ].join("\n");
+  return { type: "none" };
 }
 
 /**
- * Build Mermaid source from slide content when it looks like a process/flow/comparison,
- * or when `visualSuggestion` already contains Mermaid syntax.
+ * Decide how to visualize the slide: user-authored Mermaid, auto React Flow, or placeholder.
  */
-export function buildMermaidFromSlide(slide: SlideContent): string | null {
+export function getSlideVisualPlan(slide: SlideContent): SlideVisualPlan {
   const rawVisual = (slide.visualIdea ?? slide.visualSuggestion)?.trim() ?? "";
   if (
     /^(flowchart|graph|sequenceDiagram|mindmap|stateDiagram|erDiagram|classDiagram)/i.test(
       rawVisual
     )
   ) {
-    return rawVisual;
+    return { type: "mermaid", source: rawVisual };
   }
 
   const bullets = slide.bullets.filter(Boolean);
@@ -94,25 +49,31 @@ export function buildMermaidFromSlide(slide: SlideContent): string | null {
   const comparey = /vs\.?|versus|compared to|\bor\b.*\band\b/i.test(haystack);
 
   if (bullets.length >= 2 && comparey) {
-    return comparisonFlowchart(bullets[0]!, bullets[1]!);
+    return { type: "flow", mode: "comparison", labels: [bullets[0]!, bullets[1]!] };
   }
   if (bullets.length >= 3 && processy) {
-    return linearFlowchart(bullets);
+    return { type: "flow", mode: "linear", labels: bullets.slice(0, 8) };
   }
   if (bullets.length >= 2 && processy) {
-    return linearFlowchart(bullets);
+    return { type: "flow", mode: "linear", labels: bullets };
   }
   if (
     bullets.length >= 2 &&
     rawVisual.length > 15 &&
     /diagram|chart|map|tree|hierarchy/i.test(rawVisual + haystack)
   ) {
-    return linearFlowchart(bullets);
+    return { type: "flow", mode: "linear", labels: bullets };
   }
   if (bullets.length >= 4) {
-    return linearFlowchart(bullets);
+    return { type: "flow", mode: "linear", labels: bullets };
   }
-  return null;
+  return { type: "none" };
+}
+
+/** Only user / explicit Mermaid in visual suggestion (auto diagrams use React Flow). */
+export function buildMermaidFromSlide(slide: SlideContent): string | null {
+  const p = getSlideVisualPlan(slide);
+  return p.type === "mermaid" ? p.source : null;
 }
 
 /** Title / intro: single column layout */
@@ -127,15 +88,10 @@ export function isIntroStyleSlide(slide: SlideContent, zeroBasedIndex: number): 
 export function useTwoColumnLayout(
   slide: SlideContent,
   zeroBasedIndex: number,
-  mermaidChart: string | null
+  plan: SlideVisualPlan
 ): boolean {
   if (isIntroStyleSlide(slide, zeroBasedIndex)) return false;
-  if (mermaidChart) return true;
-  if (slide.bullets.length >= 2) return true;
-  if (
-    (slide.visualIdea ?? slide.visualSuggestion)?.trim() &&
-    slide.bullets.length >= 1
-  )
-    return true;
+  if (getEffectiveCodeSnippet(slide)) return true;
+  if (plan.type === "flow" || plan.type === "mermaid") return true;
   return false;
 }

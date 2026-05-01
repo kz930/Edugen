@@ -39,3 +39,22 @@
     text-wrap: balance;
   }
 }
+
+/* Mermaid flowchart HTML labels: avoid clipping; boxes size from wrappingWidth + layout */
+@layer components {
+  .edugen-mermaid-scroll .edugen-mermaid-svg foreignObject > div {
+    overflow: visible !important;
+    max-width: none !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+  .edugen-mermaid-scroll .edugen-mermaid-svg .nodeLabel,
+  .edugen-mermaid-scroll .edugen-mermaid-svg .label > div {
+    overflow: visible !important;
+    max-width: none !important;
+    white-space: normal !important;
+    word-wrap: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+}

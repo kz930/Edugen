@@ -8,6 +8,8 @@ const defaultSlideProps: SlideVideoProps = {
   audioHttpUrl: "",
   durationInSeconds: 10,
   narrationScript: "",
+  diagramPlan: { type: "none" },
+  themeName: "cs",
 };
 
 export const RemotionRoot: React.FC = () => {

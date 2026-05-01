@@ -7,7 +7,16 @@ import type {
   RetrievedSource,
   SlideContent,
 } from "@/types/lesson";
-import { SlidePreviewCard } from "@/components/lesson/SlidePreviewCard";
+import { SlidesEditorSection } from "@/components/lesson/SlidesEditorSection";
+import { EDITOR_PAGE_BG, type PreviewThemeId } from "@/config/lesson-editor-ui";
+import {
+  LessonThemeProvider,
+  useLessonTheme,
+} from "@/contexts/LessonThemeContext";
+import {
+  buildEditorSlideRows,
+  completedForProgress,
+} from "@/lib/editor-slide-model";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -16,7 +25,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -28,24 +36,26 @@ import {
 import { saveLessonRecord } from "@/lib/storage";
 import { upsertMysqlLesson } from "@/lib/mysql-lessons-client";
 import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
 import {
-  ArrowLeft,
   BookOpen,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
+  ClipboardList,
   Download,
+  Layers,
+  Link2,
+  Loader2,
+  Play,
   RefreshCw,
   Save,
   Sparkles,
-  Loader2,
-  Volume2,
   Square,
+  Video,
+  Volume2,
 } from "lucide-react";
 import Link from "next/link";
 import type { Dispatch, SetStateAction } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Section =
   | "overview"
@@ -55,18 +65,38 @@ type Section =
   | "practice"
   | "sources";
 
-const NAV: { id: Section; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "blueprint", label: "Learning blueprint" },
-  { id: "slides", label: "Slides" },
-  { id: "video", label: "Video" },
-  { id: "practice", label: "Practice" },
-  { id: "sources", label: "Sources" },
+const NAV: { id: Section; label: string; Icon: LucideIcon }[] = [
+  { id: "overview", label: "Overview", Icon: BookOpen },
+  { id: "blueprint", label: "Learning blueprint", Icon: Layers },
+  { id: "slides", label: "Slides", Icon: ClipboardList },
+  { id: "video", label: "Video", Icon: Video },
+  { id: "practice", label: "Practice", Icon: Sparkles },
+  { id: "sources", label: "Sources", Icon: Link2 },
 ];
 
 export function LessonWorkspace({ initial }: { initial: LessonRecord }) {
   const [lesson, setLesson] = useState<LessonRecord>(initial);
-  const [section, setSection] = useState<Section>("overview");
+
+  useEffect(() => {
+    setLesson(initial);
+  }, [initial]);
+
+  return (
+    <LessonThemeProvider lessonId={lesson.id}>
+      <LessonWorkspaceInner lesson={lesson} setLesson={setLesson} />
+    </LessonThemeProvider>
+  );
+}
+
+function LessonWorkspaceInner({
+  lesson,
+  setLesson,
+}: {
+  lesson: LessonRecord;
+  setLesson: Dispatch<SetStateAction<LessonRecord>>;
+}) {
+  const { themeName } = useLessonTheme();
+  const [section, setSection] = useState<Section>("slides");
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable"
@@ -83,35 +113,105 @@ export function LessonWorkspace({ initial }: { initial: LessonRecord }) {
     setTimeout(() => setSaveMsg(null), 5000);
   }, [lesson]);
 
-  useEffect(() => {
-    setLesson(initial);
-  }, [initial]);
-
   const d = lesson.lessonData;
+  const slides = d.slides;
+
+  const editorRows = useMemo(
+    () => buildEditorSlideRows(lesson, themeName),
+    [lesson, themeName]
+  );
+  const completedSlides = completedForProgress(editorRows);
+  const totalSlides = slides.length;
+  const progressPct = totalSlides
+    ? Math.min(100, (completedSlides / totalSlides) * 100)
+    : 0;
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] bg-muted/30">
-      <div className="border-b border-border bg-background px-4 py-3 md:px-6">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <BookOpen className="h-4 w-4" />
+    <div
+      className="flex min-h-screen flex-col bg-[#F8FAFC] md:flex-row"
+      style={{ backgroundColor: EDITOR_PAGE_BG }}
+    >
+      <aside
+        className="relative z-20 hidden min-h-screen w-[220px] shrink-0 flex-col border-r border-[#E2E8F0] bg-white md:sticky md:top-0 md:flex md:h-screen md:min-h-0"
+        style={{ borderWidth: 0.5 }}
+      >
+        <div className="p-4">
+          <div className="flex gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0D9488] text-white">
+              <BookOpen className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-medium leading-tight text-[#0F172A]">
+                {lesson.topic}
+              </p>
+              <p className="truncate text-[11px] text-[#64748B]">
+                {lesson.subject}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="mb-1 flex justify-between text-[11px] text-[#64748B]">
+              <span>Progress</span>
+              <span>
+                {completedSlides} / {totalSlides} slides
               </span>
-              Edugen
+            </div>
+            <div className="h-1 w-full rounded-[2px] bg-[#F1F5F9]">
+              <div
+                className="h-1 rounded-[2px] bg-[#0D9488] transition-all"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col px-4 pb-2">
+          <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-[#64748B]">
+            LESSON
+          </p>
+          <nav className="mt-2 flex min-h-0 flex-1 flex-col overflow-y-auto">
+            {NAV.map((n) => {
+              const Icon = n.Icon;
+              const active = section === n.id;
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => setSection(n.id)}
+                  className={cn(
+                    "flex h-9 shrink-0 items-center gap-2 border-l-2 px-4 text-left text-[13px] transition-colors",
+                    active
+                      ? "border-[#0D9488] bg-[#F0FDF9] font-medium text-[#0D9488]"
+                      : "border-transparent font-normal text-[#64748B] hover:bg-[#F8FAFC]"
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+                  <span className="truncate">{n.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </aside>
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col pb-[72px] md:pb-0">
+        <header
+          className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#E2E8F0] bg-white px-4 py-3 md:px-5"
+          style={{ borderWidth: 0.5 }}
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <Link
+              href="/library"
+              className="shrink-0 text-sm text-[#64748B] hover:text-[#0F172A]"
+            >
+              ← Saved lessons
             </Link>
-            <span className="hidden text-muted-foreground md:inline">|</span>
-            <h1 className="truncate text-base font-semibold md:text-lg">
+            <span className="hidden text-[#CBD5E1] md:inline">|</span>
+            <h1 className="truncate text-sm font-semibold text-[#0F172A] md:text-base">
               {d.lessonTitle}
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/create">
-              <Button variant="outline" size="sm" className="gap-1">
-                <ArrowLeft className="h-4 w-4" />
-                Back to Create
-              </Button>
-            </Link>
             <Button
               size="sm"
               variant="secondary"
@@ -123,135 +223,73 @@ export function LessonWorkspace({ initial }: { initial: LessonRecord }) {
             </Button>
             <ExportDropdown lesson={lesson} />
           </div>
-        </div>
+        </header>
         {saveMsg ? (
-          <p className="mx-auto mt-2 max-w-7xl text-xs text-muted-foreground">
+          <p className="border-b border-[#E2E8F0] bg-white px-4 py-1.5 text-xs text-[#64748B] md:px-5">
             {saveMsg}
           </p>
         ) : null}
-      </div>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[220px_1fr_260px] md:px-6">
-        {/* Sidebar */}
-        <aside className="hidden lg:block">
-          <nav className="sticky top-24 space-y-1 rounded-xl border border-border bg-card p-2 shadow-sm">
-            {NAV.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                onClick={() => setSection(n.id)}
-                className={cn(
-                  "flex w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-                  section === n.id
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted"
-                )}
-              >
-                {n.label}
-              </button>
-            ))}
-          </nav>
-        </aside>
-
-        {/* Mobile section tabs */}
-        <div className="lg:hidden">
-          <select
-            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
-            value={section}
-            onChange={(e) => setSection(e.target.value as Section)}
+        {section === "slides" ? (
+          <SlidesEditorSection lesson={lesson} setLesson={setLesson} />
+        ) : (
+          <main
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6",
+              density === "compact" && "text-sm"
+            )}
           >
-            {NAV.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Main */}
-        <main
-          className={cn(
-            "min-h-[480px] space-y-6",
-            density === "compact" && "text-sm"
-          )}
-        >
-          {section === "overview" ? (
-            <OverviewSection lesson={lesson} />
-          ) : null}
-          {section === "blueprint" ? (
-            <BlueprintSection data={d} />
-          ) : null}
-          {section === "slides" ? (
-            <SlidesSection lesson={lesson} setLesson={setLesson} />
-          ) : null}
-          {section === "video" ? (
-            <VideoSection lesson={lesson} setLesson={setLesson} />
-          ) : null}
-          {section === "practice" ? (
-            <PracticeSection lesson={lesson} />
-          ) : null}
-          {section === "sources" ? (
-            <SourcesSection lesson={lesson} />
-          ) : null}
-
-          <p className="text-xs text-muted-foreground">
-            Edugen is a study support tool. It may make mistakes. Always verify
-            important information with your instructor, textbook, or cited
-            sources.
-          </p>
-        </main>
-
-        {/* Right */}
-        <aside className="space-y-4">
-          <Card className="shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Lesson settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label>Reading density</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                  value={density}
-                  onChange={(e) =>
-                    setDensity(e.target.value as "comfortable" | "compact")
-                  }
-                >
-                  <option value="comfortable">Comfortable</option>
-                  <option value="compact">Compact</option>
-                </select>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Tip: Use{" "}
-                <strong className="text-foreground">Regenerate slide</strong>{" "}
-                on each card for deeper adjustments (requires OpenAI).
+            <div className="mx-auto max-w-4xl space-y-6">
+              {section === "overview" ? (
+                <OverviewSection lesson={lesson} />
+              ) : null}
+              {section === "blueprint" ? (
+                <BlueprintSection data={d} />
+              ) : null}
+              {section === "video" ? (
+                <VideoSection lesson={lesson} setLesson={setLesson} />
+              ) : null}
+              {section === "practice" ? (
+                <PracticeSection lesson={lesson} />
+              ) : null}
+              {section === "sources" ? (
+                <SourcesSection lesson={lesson} />
+              ) : null}
+              <p className="text-xs text-[#64748B]">
+                Edugen is a study support tool. It may make mistakes. Always
+                verify important information with your instructor, textbook, or
+                cited sources.
               </p>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Sources in lesson</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {lesson.sources.length === 0 ? (
-                <p className="text-muted-foreground">
-                  This lesson was generated from your notes only.
-                </p>
-              ) : (
-                lesson.sources.slice(0, 6).map((s) => (
-                  <div key={s.id} className="truncate text-xs">
-                    <Badge variant="outline" className="mr-1">
-                      {s.type}
-                    </Badge>
-                    <span>{s.domain}</span>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </aside>
+            </div>
+          </main>
+        )}
       </div>
+
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#E2E8F0] bg-white px-1 py-2 md:hidden"
+        style={{ borderWidth: 0.5 }}
+      >
+        {NAV.map((n) => {
+          const Icon = n.Icon;
+          const active = section === n.id;
+          return (
+            <button
+              key={n.id}
+              type="button"
+              onClick={() => setSection(n.id)}
+              className={cn(
+                "flex flex-1 flex-col items-center gap-0.5 px-1 py-1 text-[10px] leading-tight",
+                active ? "font-medium text-[#0D9488]" : "text-[#64748B]"
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="line-clamp-2 text-center">
+                {n.label.split(" ")[0]}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
@@ -380,153 +418,6 @@ function BlueprintSection({ data }: { data: GeneratedLessonData }) {
   );
 }
 
-function SlidesSection({
-  lesson,
-  setLesson,
-}: {
-  lesson: LessonRecord;
-  setLesson: Dispatch<SetStateAction<LessonRecord>>;
-}) {
-  const slides = lesson.lessonData.slides;
-  const [idx, setIdx] = useState(0);
-  const [editing, setEditing] = useState(false);
-  const [regenLoading, setRegenLoading] = useState(false);
-  const slide = slides[idx];
-
-  const updateSlide = useCallback(
-    (patch: Partial<SlideContent>) => {
-      setLesson((prev) => {
-        const nextSlides = prev.lessonData.slides.map((s) =>
-          s.slideNumber === slide.slideNumber ? { ...s, ...patch } : s
-        );
-        return {
-          ...prev,
-          lessonData: { ...prev.lessonData, slides: nextSlides },
-        };
-      });
-    },
-    [setLesson, slide?.slideNumber]
-  );
-
-  const regenerate = async () => {
-    if (!slide) return;
-    setRegenLoading(true);
-    try {
-      const res = await fetch("/api/regenerate-slide", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slideNumber: slide.slideNumber,
-          topic: lesson.topic,
-          lessonTitle: lesson.lessonData.lessonTitle,
-          selectedSources: lesson.sources.filter((s) =>
-            lesson.lessonData.sourcesUsed.includes(s.id)
-          ),
-          uploadedText: lesson.uploadedText,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const newSlide = data.slide as SlideContent;
-      setLesson((prev) => ({
-        ...prev,
-        lessonData: {
-          ...prev.lessonData,
-          slides: prev.lessonData.slides.map((s) =>
-            s.slideNumber === newSlide.slideNumber ? newSlide : s
-          ),
-        },
-      }));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setRegenLoading(false);
-    }
-  };
-
-  const copySlide = async () => {
-    if (!slide) return;
-    const text = `${slide.title}\n\n${slide.mainIdea}\n\n${slide.bullets.map((b) => `- ${b}`).join("\n")}`;
-    await navigator.clipboard.writeText(text);
-  };
-
-  if (!slides.length) {
-    return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          Slides were disabled for this generation.
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={idx <= 0}
-            onClick={() => setIdx((i) => Math.max(0, i - 1))}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Slide {idx + 1} / {slides.length}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={idx >= slides.length - 1}
-            onClick={() => setIdx((i) => Math.min(slides.length - 1, i + 1))}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => setEditing((e) => !e)}
-          >
-            {editing ? "Done editing" : "Edit slide"}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="gap-1"
-            onClick={regenerate}
-            disabled={regenLoading}
-          >
-            <RefreshCw className={cn("h-4 w-4", regenLoading && "animate-spin")} />
-            Regenerate slide
-          </Button>
-          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={copySlide}>
-            <Copy className="h-4 w-4" />
-            Copy slide
-          </Button>
-        </div>
-      </div>
-
-      {slide ? (
-        <SlidePreviewCard
-          slide={slide}
-          slideIndex={idx}
-          totalSlides={slides.length}
-          editing={editing}
-          lesson={lesson}
-          onUpdate={updateSlide}
-        />
-      ) : null}
-    </div>
-  );
-}
-
 type VideoGenState =
   | { status: "idle" }
   | { status: "audio" }
@@ -538,6 +429,7 @@ async function runSlideVideoPipeline(
   slideNumber: number,
   script: string,
   slide: SlideContent,
+  themeName: PreviewThemeId,
   onPhase: (phase: "audio" | "video") => void
 ): Promise<{ ok: true; videoUrl: string } | { ok: false; message: string }> {
   try {
@@ -564,12 +456,17 @@ async function runSlideVideoPipeline(
         slideIndex: slideNumber,
         title: slide.title,
         bullets: slide.bullets,
+        mainIdea: slide.mainIdea,
+        visualSuggestion: slide.visualSuggestion,
+        visualIdea: slide.visualIdea,
+        codeSnippet: slide.codeSnippet,
         audioUrl,
         durationInSeconds:
           typeof durationInSeconds === "number" && durationInSeconds > 0
             ? durationInSeconds
             : 10,
         narrationScript: script,
+        themeName,
       }),
     });
     const renderData = await renderRes.json();
@@ -595,6 +492,7 @@ function VideoSection({
   lesson: LessonRecord;
   setLesson: Dispatch<SetStateAction<LessonRecord>>;
 }) {
+  const { themeName } = useLessonTheme();
   const narr = lesson.lessonData.narration;
   const slides = lesson.lessonData.slides;
   const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
@@ -667,6 +565,7 @@ function VideoSection({
         n.slideNumber,
         n.script,
         slide,
+        themeName,
         (phase) => {
           setVideoBySlide((prev) => ({ ...prev, [n.slideNumber]: { status: phase } }));
           if (phase === "video") {
@@ -862,10 +761,12 @@ function QuestionCard({
   } | null>(null);
   const [explainExtra, setExplainExtra] = useState<string | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
+  const [answerRevealed, setAnswerRevealed] = useState(false);
 
   const submit = async () => {
     setLoading(true);
     setResult(null);
+    setAnswerRevealed(false);
     try {
       const payload =
         question.type === "multiple_choice"
@@ -996,9 +897,31 @@ function QuestionCard({
               {result.isCorrect ? "Nice work." : "Keep going."}
             </p>
             <p className="mt-1">{result.feedback}</p>
-            {question.explanation ? (
-              <p className="mt-2 text-muted-foreground">{question.explanation}</p>
-            ) : null}
+            {result.isCorrect ? (
+              question.explanation ? (
+                <p className="mt-2 text-muted-foreground">{question.explanation}</p>
+              ) : null
+            ) : answerRevealed ? (
+              <div className="mt-3 space-y-2 border-t border-amber-300/50 pt-3">
+                <p className="font-medium text-amber-950">
+                  Correct answer:{" "}
+                  <span className="font-normal">{question.correctAnswer}</span>
+                </p>
+                {question.explanation ? (
+                  <p className="text-muted-foreground">{question.explanation}</p>
+                ) : null}
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => setAnswerRevealed(true)}
+              >
+                Show answer
+              </Button>
+            )}
             {result.conceptToReview ? (
               <p className="mt-2 text-xs">
                 <span className="font-medium">Review:</span> {result.conceptToReview}

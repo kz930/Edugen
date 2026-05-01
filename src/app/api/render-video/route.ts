@@ -1,5 +1,12 @@
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
+import {
+  buildDiagramPlan,
+  visualPlanToRemotionDiagram,
+} from "@/lib/slide-mermaid";
+import { getEffectiveCodeSnippet } from "@/lib/slide-code-snippet";
+import { parsePreviewThemeId } from "@/themes/tokens";
+import type { SlideContent } from "@/types/lesson";
 import { access, mkdir } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
@@ -10,11 +17,31 @@ export const maxDuration = 300;
 
 let bundlePromise: Promise<string> | null = null;
 
+import type { Configuration } from "webpack";
+
+/** Remotion's webpack does not read tsconfig `paths`; mirror Next's `@` → `src`. */
+function remotionWebpackOverride(config: Configuration): Configuration {
+  const src = path.join(process.cwd(), "src");
+  const prev = config.resolve?.alias;
+  const base =
+    prev && typeof prev === "object" && !Array.isArray(prev) ? prev : {};
+  return {
+    ...config,
+    resolve: {
+      ...config.resolve,
+      alias: {
+        ...base,
+        "@": src,
+      },
+    },
+  };
+}
+
 function getBundledServeUrl(): Promise<string> {
   if (!bundlePromise) {
     bundlePromise = bundle({
       entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
-      webpackOverride: (config) => config,
+      webpackOverride: remotionWebpackOverride,
       publicDir: path.join(process.cwd(), "public"),
     });
   }
@@ -28,6 +55,11 @@ type RenderBody = {
   audioUrl?: string;
   durationInSeconds?: number;
   narrationScript?: string;
+  mainIdea?: string;
+  visualSuggestion?: string;
+  visualIdea?: string;
+  codeSnippet?: string;
+  themeName?: string;
 };
 
 export async function POST(req: Request) {
@@ -84,12 +116,35 @@ export async function POST(req: Request) {
     audioHttpUrl = `${base}${audioUrl.startsWith("/") ? audioUrl : `/${audioUrl}`}`;
   }
 
+  const slideForPlan: SlideContent = {
+    slideNumber: slideIndex,
+    title,
+    mainIdea: typeof body.mainIdea === "string" ? body.mainIdea : "",
+    bullets,
+    visualSuggestion:
+      typeof body.visualSuggestion === "string" ? body.visualSuggestion : "",
+    visualIdea: typeof body.visualIdea === "string" ? body.visualIdea : undefined,
+    codeSnippet:
+      typeof body.codeSnippet === "string" && body.codeSnippet.trim()
+        ? body.codeSnippet
+        : undefined,
+    speakerNotes: "",
+    sourceIds: [],
+  };
+  const diagramPlan = visualPlanToRemotionDiagram(buildDiagramPlan(slideForPlan));
+  const codeForVideo = getEffectiveCodeSnippet(slideForPlan);
+
+  const themeName = parsePreviewThemeId(body.themeName) ?? "cs";
+
   const inputProps = {
     title,
     bullets,
     audioHttpUrl,
     durationInSeconds,
     narrationScript,
+    diagramPlan,
+    themeName,
+    codeSnippet: codeForVideo ?? undefined,
   };
 
   try {

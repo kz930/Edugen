@@ -2,17 +2,55 @@
 
 import type { LessonRecord, SlideContent } from "@/types/lesson";
 import {
+  buildDiagramPlan,
   buildMermaidFromSlide,
   useTwoColumnLayout,
 } from "@/lib/slide-mermaid";
+import {
+  extractRawFenceInner,
+  getEffectiveCodeSnippet,
+  hasCodePlaceholder,
+  inferCodeLanguage,
+} from "@/lib/slide-code-snippet";
+import { splitNarrationSegments } from "@/lib/narration-segments";
+import type { PreviewThemeId } from "@/themes/tokens";
+import { themeFontStack, themeTokens } from "@/themes/tokens";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import { MermaidDiagram } from "@/components/lesson/MermaidDiagram";
-import { cn } from "@/lib/utils";
-import { Lightbulb, ChevronDown } from "lucide-react";
-import { useMemo } from "react";
+import { SlideFlowDiagram } from "@/components/lesson/SlideFlowDiagram";
+import { SlideRichBody } from "@/components/lesson/SlideRichBody";
+import { SlideCodeBlock } from "@/components/lesson/SlideCodeBlock";
+import {
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  CircleDot,
+  Cpu,
+  GitBranch,
+  Layers,
+  Lightbulb,
+  Sparkles,
+  Target,
+  Zap,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 type UpdateSlide = (patch: Partial<SlideContent>) => void;
+
+const BULLET_ICONS = [
+  Sparkles,
+  Target,
+  BookOpen,
+  Cpu,
+  GitBranch,
+  Lightbulb,
+  CircleDot,
+  CheckCircle2,
+  Layers,
+  Zap,
+] as const;
 
 export function SlidePreviewCard({
   slide,
@@ -21,6 +59,8 @@ export function SlidePreviewCard({
   editing,
   lesson,
   onUpdate,
+  previewThemeId,
+  narrationScript = "",
 }: {
   slide: SlideContent;
   slideIndex: number;
@@ -28,9 +68,57 @@ export function SlidePreviewCard({
   editing: boolean;
   lesson: LessonRecord;
   onUpdate: UpdateSlide;
+  previewThemeId: PreviewThemeId;
+  narrationScript?: string;
 }) {
+  const tokens = themeTokens[previewThemeId];
+  const plan = useMemo(() => buildDiagramPlan(slide), [slide]);
   const chart = useMemo(() => buildMermaidFromSlide(slide), [slide]);
-  const twoCol = useTwoColumnLayout(slide, slideIndex, chart);
+  const twoCol = useTwoColumnLayout(slide, slideIndex, plan);
+
+  const segments = useMemo(
+    () => splitNarrationSegments(narrationScript, slide.title),
+    [narrationScript, slide.title]
+  );
+  const effectiveCode = useMemo(() => getEffectiveCodeSnippet(slide), [slide]);
+  const codeLang = useMemo(() => inferCodeLanguage(slide), [slide]);
+  const [subtitleIdx, setSubtitleIdx] = useState(0);
+  const [codeRecovering, setCodeRecovering] = useState(false);
+
+  useEffect(() => {
+    setSubtitleIdx(0);
+  }, [slide.slideNumber, narrationScript]);
+
+  const subtitleSafe = Math.min(subtitleIdx, Math.max(0, segments.length - 1));
+  const subtitleText = segments[subtitleSafe] ?? "";
+
+  async function regenerateSlideCode() {
+    const desc =
+      slide.codeSnippet?.trim() ||
+      extractRawFenceInner(slide.visualSuggestion ?? "")?.trim() ||
+      slide.visualSuggestion?.trim() ||
+      "";
+    if (!desc) return;
+    setCodeRecovering(true);
+    try {
+      const res = await fetch("/api/regenerate-slide-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: desc }),
+      });
+      const data = (await res.json()) as { code?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? "Could not generate code");
+      }
+      if (data.code) {
+        onUpdate({ codeSnippet: data.code });
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCodeRecovering(false);
+    }
+  }
 
   const sourceChips = slide.sourceIds
     .map((id) => {
@@ -39,11 +127,14 @@ export function SlidePreviewCard({
     })
     .filter(Boolean) as { id: string; n: number }[];
 
+  const titleFont = themeFontStack("fontTitle", tokens);
+  const bodyFont = themeFontStack("fontBody", tokens);
+
   if (editing) {
     return (
       <div className="rounded-xl bg-[#f5f5f5] p-6 md:p-8">
         <div className="rounded-lg border border-black/[0.06] bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
-          <div className="h-1 w-full bg-primary" />
+          <div className="h-1 w-full" style={{ backgroundColor: tokens.accent }} />
           <div className="space-y-4 p-6 md:p-8">
             <Input
               className="text-xl font-bold"
@@ -79,6 +170,22 @@ export function SlidePreviewCard({
                 onChange={(e) => onUpdate({ visualSuggestion: e.target.value })}
               />
             </div>
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">
+                Code snippet (optional — raw source only)
+              </span>
+              <Textarea
+                className="mt-1 font-mono text-sm"
+                rows={6}
+                value={slide.codeSnippet ?? ""}
+                onChange={(e) =>
+                  onUpdate({
+                    codeSnippet: e.target.value ? e.target.value : undefined,
+                  })
+                }
+                placeholder="def factorial(n): ..."
+              />
+            </div>
             <Textarea
               value={slide.speakerNotes}
               onChange={(e) => onUpdate({ speakerNotes: e.target.value })}
@@ -101,116 +208,242 @@ export function SlidePreviewCard({
     );
   }
 
-  return (
-    <div className="rounded-xl bg-[#f5f5f5] p-6 md:p-8">
-      <div
-        className={cn(
-          "relative overflow-hidden rounded-lg border border-black/[0.06] bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)]"
-        )}
-      >
-        <div className="h-1 w-full bg-primary" aria-hidden />
+  const visualPanel = (() => {
+    if (effectiveCode) {
+      return (
+        <SlideCodeBlock
+          code={effectiveCode}
+          language={codeLang}
+          className="w-full min-w-0"
+        />
+      );
+    }
+    if (plan.type === "flow") {
+      return <SlideFlowDiagram plan={plan} tokens={tokens} />;
+    }
+    if (plan.type === "mermaid" && chart) {
+      return (
+        <div className="w-full min-w-0 overflow-x-auto overflow-y-visible">
+          <MermaidDiagram chart={chart} slideKey={`${slide.slideNumber}`} surface="dark" />
+        </div>
+      );
+    }
+    return null;
+  })();
 
-        <div className="relative p-6 pb-14 pt-7 md:p-8 md:pb-16 md:pt-8">
+  const layoutTwoCol = twoCol && visualPanel != null;
+
+  const bulletRow = (text: string, i: number) => {
+    const Icon = BULLET_ICONS[i % BULLET_ICONS.length]!;
+    return (
+      <li key={i} className="flex gap-4">
+        <span
+          className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-md ring-1"
+          style={{
+            backgroundColor: `${tokens.accent}22`,
+            color: tokens.accent,
+            borderColor: `${tokens.accent}44`,
+          }}
+        >
+          <Icon className="h-5 w-5" strokeWidth={2} aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 space-y-3" style={{ color: tokens.textMuted }}>
+          <SlideRichBody
+            text={text}
+            className="space-y-3"
+            proseClassName="!text-inherit text-[17px]"
+          />
+        </div>
+      </li>
+    );
+  };
+
+  return (
+    <div
+      className="rounded-2xl shadow-xl ring-1"
+      style={{
+        borderColor: tokens.border,
+        backgroundColor: tokens.bg,
+        color: tokens.textPrimary,
+        boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)",
+      }}
+    >
+      <div
+        className="relative overflow-hidden rounded-[14px] md:rounded-[15px]"
+        style={{ fontFamily: bodyFont }}
+      >
+        <div
+          className="h-1 w-full"
+          style={{
+            background: `linear-gradient(90deg, ${tokens.topBarStart}, ${tokens.topBarEnd})`,
+          }}
+          aria-hidden
+        />
+
+        <div className="relative px-5 pb-28 pt-8 md:px-10 md:pb-32 md:pt-10">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em]" style={{ color: tokens.accent }}>
+            Slide deck
+          </p>
           <h2
-            className="font-bold leading-tight tracking-tight text-[#1a1a2e]"
-            style={{ fontSize: "clamp(1.5rem, 2vw + 1rem, 2rem)" }}
+            className="mt-2 max-w-4xl text-3xl font-extrabold leading-[1.15] tracking-tight md:text-[2.15rem]"
+            style={{ fontFamily: titleFont, color: tokens.textPrimary }}
           >
             {slide.title}
           </h2>
 
-          {twoCol ? (
-            <div className="mt-6 grid gap-8 md:grid-cols-2 md:items-start">
-              <div className="min-w-0 space-y-5">
+          {hasCodePlaceholder(slide) ? (
+            <button
+              type="button"
+              disabled={codeRecovering}
+              onClick={() => void regenerateSlideCode()}
+              className="mt-5 w-full rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-2.5 text-left text-sm font-medium text-amber-950 shadow-sm transition hover:bg-amber-500/25 disabled:opacity-60 dark:text-amber-50"
+            >
+              ⚠ Code placeholder detected — click to generate real code
+              {codeRecovering ? " …" : ""}
+            </button>
+          ) : null}
+
+          {layoutTwoCol ? (
+            <div className="mt-8 grid gap-10 md:grid-cols-2 md:items-start">
+              <div className="min-w-0 space-y-8">
                 {slide.mainIdea ? (
-                  <p className="text-[17px] leading-[1.65] text-[#2d2d44]">{slide.mainIdea}</p>
+                  <div style={{ color: tokens.textMuted }}>
+                    <SlideRichBody
+                      text={slide.mainIdea}
+                      proseClassName="!text-inherit text-lg leading-relaxed md:text-[1.125rem]"
+                    />
+                  </div>
                 ) : null}
                 {slide.bullets.length > 0 ? (
-                  <ul className="space-y-3">
-                    {slide.bullets.map((b, i) => (
-                      <li key={i} className="flex gap-3 text-[17px] leading-[1.6] text-[#2d2d44]">
-                        <span
-                          className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary"
-                          aria-hidden
-                        />
-                        <span className="min-w-0">{b}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <ul className="space-y-6">{slide.bullets.map((b, i) => bulletRow(b, i))}</ul>
                 ) : null}
               </div>
-              <div className="min-w-0">
-                {chart ? (
-                  <MermaidDiagram chart={chart} slideKey={`${slide.slideNumber}`} />
-                ) : (
-                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-200 bg-gradient-to-br from-primary/[0.06] to-slate-50/90 p-6 text-center">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
-                      <Lightbulb className="h-7 w-7" strokeWidth={1.5} />
-                    </div>
-                    {(slide.visualIdea ?? slide.visualSuggestion) ? (
-                      <p className="text-sm leading-relaxed text-slate-600">
-                        {slide.visualIdea ?? slide.visualSuggestion}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-slate-500">
-                        Visual placeholder — add bullets or a visual suggestion to auto-draw a
-                        diagram.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+              <div className="min-w-0 w-full">{visualPanel}</div>
             </div>
           ) : (
-            <div className="mt-6 space-y-6">
+            <div className="mt-8 space-y-10">
               {slide.mainIdea ? (
-                <p className="text-[17px] leading-[1.65] text-[#2d2d44]">{slide.mainIdea}</p>
+                <div style={{ color: tokens.textMuted }}>
+                  <SlideRichBody
+                    text={slide.mainIdea}
+                    proseClassName="!text-inherit text-lg leading-relaxed md:text-[1.125rem]"
+                  />
+                </div>
               ) : null}
               {slide.bullets.length > 0 ? (
-                <ul className="space-y-3">
-                  {slide.bullets.map((b, i) => (
-                    <li key={i} className="flex gap-3 text-[17px] leading-[1.6] text-[#2d2d44]">
-                      <span
-                        className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary"
-                        aria-hidden
-                      />
-                      <span className="min-w-0">{b}</span>
-                    </li>
-                  ))}
-                </ul>
+                <ul className="space-y-6">{slide.bullets.map((b, i) => bulletRow(b, i))}</ul>
               ) : null}
-              {chart ? (
-                <MermaidDiagram chart={chart} slideKey={`${slide.slideNumber}-full`} />
+              {effectiveCode ? (
+                <SlideCodeBlock
+                  code={effectiveCode}
+                  language={codeLang}
+                  className="w-full min-w-0"
+                />
+              ) : plan.type === "flow" ? (
+                <SlideFlowDiagram plan={plan} tokens={tokens} />
+              ) : plan.type === "mermaid" && chart ? (
+                <div className="w-full min-w-0 overflow-x-auto overflow-y-visible">
+                  <MermaidDiagram chart={chart} slideKey={`${slide.slideNumber}-full`} surface="dark" />
+                </div>
               ) : null}
             </div>
           )}
 
-          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-1.5 md:bottom-4 md:left-4">
+          <div className="pointer-events-none absolute bottom-16 left-4 flex flex-wrap gap-2 md:left-6">
             {sourceChips.map(({ id, n }) => (
               <span
                 key={id}
-                className="pointer-events-auto inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600 shadow-sm"
+                className="pointer-events-auto inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide shadow backdrop-blur-sm"
+                style={{
+                  borderColor: tokens.border,
+                  backgroundColor: tokens.bgSecondary,
+                  color: tokens.textMuted,
+                }}
               >
                 Source [{n}]
               </span>
             ))}
           </div>
 
-          <div className="pointer-events-none absolute bottom-3 right-3 md:bottom-4 md:right-4">
-            <span className="pointer-events-none inline-flex h-8 min-w-[2rem] items-center justify-center rounded-md border border-slate-200/90 bg-white px-2 text-xs font-semibold tabular-nums text-slate-500 shadow-sm">
+          <div className="pointer-events-none absolute bottom-16 right-4 md:right-6">
+            <span
+              className="pointer-events-none inline-flex h-9 min-w-[2.5rem] items-center justify-center rounded-lg border px-2.5 text-xs font-bold tabular-nums shadow-inner"
+              style={{
+                borderColor: tokens.border,
+                backgroundColor: tokens.bgSecondary,
+                color: tokens.textPrimary,
+              }}
+            >
               {slide.slideNumber} / {totalSlides}
             </span>
+          </div>
+
+          <div
+            className="pointer-events-auto absolute bottom-4 left-4 right-4 rounded-lg border px-3 py-2 md:left-6 md:right-6"
+            style={{
+              borderColor: tokens.border,
+              backgroundColor: tokens.bgSecondary,
+            }}
+          >
+            <p className="text-center text-sm leading-snug md:text-base" style={{ color: tokens.textPrimary }}>
+              {subtitleText || "—"}
+            </p>
+            {segments.length > 1 ? (
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => setSubtitleIdx((i) => Math.max(0, i - 1))}
+                >
+                  Previous sentence
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() =>
+                    setSubtitleIdx((i) => Math.min(segments.length - 1, i + 1))
+                  }
+                >
+                  Next sentence
+                </Button>
+                <span className="text-[11px]" style={{ color: tokens.textMuted }}>
+                  Preview subtitles · {subtitleSafe + 1} / {segments.length}
+                </span>
+              </div>
+            ) : (
+              <p className="mt-1 text-center text-[11px]" style={{ color: tokens.textMuted }}>
+                Matches video subtitle timing (one sentence shown per segment).
+              </p>
+            )}
           </div>
         </div>
       </div>
 
-      <details className="group mt-4 overflow-hidden rounded-lg border border-amber-200/70 bg-[#fffbeb] shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-amber-950/90 hover:bg-amber-50/80 [&::-webkit-details-marker]:hidden">
+      <details
+        className="group mt-4 overflow-hidden rounded-xl border shadow-lg backdrop-blur-sm"
+        style={{ borderColor: tokens.border, backgroundColor: tokens.bgSecondary }}
+      >
+        <summary
+          className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3.5 text-sm font-semibold [&::-webkit-details-marker]:hidden"
+          style={{ color: tokens.textPrimary }}
+        >
           <span>Speaker notes</span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-amber-800/70 transition-transform group-open:rotate-180" />
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-70 transition-transform group-open:rotate-180" />
         </summary>
-        <div className="border-t border-amber-200/60 px-4 py-3 text-[15px] leading-relaxed text-amber-950/85">
-          {slide.speakerNotes || (
-            <span className="italic text-amber-800/60">No notes for this slide.</span>
+        <div className="border-t px-4 py-4 text-[15px] leading-relaxed" style={{ borderColor: tokens.border }}>
+          {slide.speakerNotes ? (
+            <div style={{ color: tokens.textMuted }}>
+              <SlideRichBody
+                text={slide.speakerNotes}
+                proseClassName="!text-inherit text-[15px]"
+              />
+            </div>
+          ) : (
+            <span className="italic opacity-60">No notes for this slide.</span>
           )}
         </div>
       </details>

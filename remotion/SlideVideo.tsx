@@ -6,32 +6,46 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import type { PreviewThemeId } from "@/themes/tokens";
+import { themeFontStack } from "@/themes/tokens";
+import { splitNarrationSegments } from "@/lib/narration-segments";
+import {
+  RemotionLessonThemeProvider,
+  useRemotionLessonTheme,
+} from "./LessonVideoThemeContext";
+import { SlideFlowAnimation, type VideoDiagramPlan } from "./SlideFlowAnimation";
+import { looksLikeCode } from "@/lib/slide-code-snippet";
 
 export type SlideVideoProps = {
   title: string;
   bullets: string[];
-  /** Absolute http(s) URL to the MP3 (Next serves `public/`). Remotion only loads http(s). */
   audioHttpUrl: string;
   durationInSeconds: number;
   narrationScript: string;
+  diagramPlan: VideoDiagramPlan;
+  themeName: PreviewThemeId;
+  /** Raw code only; prose placeholders are ignored (same rules as slide preview). */
+  codeSnippet?: string;
 };
 
-export const SlideVideo: React.FC<SlideVideoProps> = ({
+function SlideVideoBody({
   title,
   bullets,
   audioHttpUrl,
   durationInSeconds,
   narrationScript,
-}) => {
+  diagramPlan,
+  codeSnippet,
+}: Omit<SlideVideoProps, "themeName">) {
+  const theme = useRemotionLessonTheme();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
 
-  const segments = useMemo(() => {
-    const raw = (narrationScript || title || "").trim();
-    const parts = raw.split(/(?<=[.!?])\s+/).filter(Boolean);
-    return parts.length ? parts : [raw || title];
-  }, [narrationScript, title]);
+  const segments = useMemo(
+    () => splitNarrationSegments(narrationScript, title),
+    [narrationScript, title]
+  );
 
   const segDur = durationInSeconds / Math.max(1, segments.length);
   const segIdx = Math.min(
@@ -40,12 +54,68 @@ export const SlideVideo: React.FC<SlideVideoProps> = ({
   );
   const subtitle = segments[segIdx] ?? "";
 
+  const effectiveCode =
+    codeSnippet?.trim() && looksLikeCode(codeSnippet.trim())
+      ? codeSnippet.trim()
+      : null;
+
+  const showCodePanel = Boolean(effectiveCode);
+  const showFlowDiagram = diagramPlan.type === "flow" && !showCodePanel;
+
+  const titleFont = themeFontStack("fontTitle", theme);
+  const bodyFont = themeFontStack("fontBody", theme);
+
+  const bulletBlock = (compact: boolean) =>
+    bullets.map((bullet, i) => {
+      const appearsAt =
+        (durationInSeconds / Math.max(bullets.length + 1, 2)) * (i + 1);
+      const opacity = interpolate(
+        t,
+        [Math.max(0, appearsAt - 0.35), appearsAt],
+        [0, 1],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+      );
+      return (
+        <div
+          key={i}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            marginBottom: compact ? 12 : 16,
+            opacity,
+            fontFamily: bodyFont,
+          }}
+        >
+          <div
+            style={{
+              width: compact ? 8 : 10,
+              height: compact ? 8 : 10,
+              borderRadius: "50%",
+              backgroundColor: theme.accent,
+              marginRight: compact ? 12 : 16,
+              flexShrink: 0,
+            }}
+          />
+          <p
+            style={{
+              fontSize: compact ? 20 : 28,
+              color: theme.textMuted,
+              margin: 0,
+              lineHeight: 1.35,
+            }}
+          >
+            {bullet}
+          </p>
+        </div>
+      );
+    });
+
   return (
     <AbsoluteFill
       style={{
-        backgroundColor: "#ffffff",
+        backgroundColor: theme.bg,
         padding: 60,
-        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+        fontFamily: bodyFont,
       }}
     >
       <div
@@ -54,8 +124,8 @@ export const SlideVideo: React.FC<SlideVideoProps> = ({
           top: 0,
           left: 0,
           right: 0,
-          height: 6,
-          backgroundColor: "#0d9488",
+          height: 4,
+          background: `linear-gradient(90deg, ${theme.topBarStart}, ${theme.topBarEnd})`,
         }}
       />
 
@@ -63,47 +133,81 @@ export const SlideVideo: React.FC<SlideVideoProps> = ({
         style={{
           fontSize: 48,
           fontWeight: 700,
-          color: "#1e293b",
-          marginBottom: 32,
+          color: theme.textPrimary,
+          marginBottom: showFlowDiagram || showCodePanel ? 20 : 32,
           marginTop: 8,
+          fontFamily: titleFont,
         }}
       >
         {title}
       </h1>
 
-      {bullets.map((bullet, i) => {
-        const appearsAt =
-          (durationInSeconds / Math.max(bullets.length + 1, 2)) * (i + 1);
-        const opacity = interpolate(
-          t,
-          [Math.max(0, appearsAt - 0.35), appearsAt],
-          [0, 1],
-          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-        );
-        return (
+      {showFlowDiagram ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 36,
+            alignItems: "flex-start",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ flex: "1 1 50%", minWidth: 0, maxWidth: "52%" }}>
+            {bulletBlock(true)}
+          </div>
           <div
-            key={i}
             style={{
-              display: "flex",
-              alignItems: "center",
-              marginBottom: 16,
-              opacity,
+              flex: "0 0 46%",
+              minHeight: 500,
+              position: "relative",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              backgroundColor: theme.bgSecondary,
+              overflow: "hidden",
             }}
           >
-            <div
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                backgroundColor: "#0d9488",
-                marginRight: 16,
-                flexShrink: 0,
-              }}
-            />
-            <p style={{ fontSize: 28, color: "#334155", margin: 0 }}>{bullet}</p>
+            <SlideFlowAnimation plan={diagramPlan} />
           </div>
-        );
-      })}
+        </div>
+      ) : showCodePanel ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 36,
+            alignItems: "flex-start",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ flex: "1 1 50%", minWidth: 0, maxWidth: "52%" }}>
+            {bulletBlock(true)}
+          </div>
+          <div
+            style={{
+              flex: "0 0 46%",
+              minHeight: 420,
+              maxHeight: 520,
+              position: "relative",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              backgroundColor: theme.bgSecondary,
+              overflow: "auto",
+              padding: "18px 22px",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 17,
+              lineHeight: 1.45,
+              color: theme.textMuted,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {effectiveCode}
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: 8 }}>{bulletBlock(false)}</div>
+      )}
 
       <div
         style={{
@@ -111,18 +215,20 @@ export const SlideVideo: React.FC<SlideVideoProps> = ({
           bottom: 40,
           left: 60,
           right: 60,
-          backgroundColor: "rgba(0,0,0,0.75)",
+          backgroundColor: theme.bgSecondary,
           borderRadius: 8,
           padding: "12px 20px",
+          border: `1px solid ${theme.border}`,
         }}
       >
         <p
           style={{
-            color: "white",
+            color: theme.textPrimary,
             fontSize: 22,
             margin: 0,
             textAlign: "center",
             lineHeight: 1.35,
+            fontFamily: bodyFont,
           }}
         >
           {subtitle}
@@ -131,5 +237,16 @@ export const SlideVideo: React.FC<SlideVideoProps> = ({
 
       {audioHttpUrl ? <Audio src={audioHttpUrl} /> : null}
     </AbsoluteFill>
+  );
+}
+
+export const SlideVideo: React.FC<SlideVideoProps> = ({
+  themeName,
+  ...rest
+}) => {
+  return (
+    <RemotionLessonThemeProvider themeName={themeName}>
+      <SlideVideoBody {...rest} />
+    </RemotionLessonThemeProvider>
   );
 };

@@ -8,6 +8,7 @@ import type {
   RetrievedSource,
   Subject,
 } from "@/types/lesson";
+import { sanitizeLessonSlides } from "@/lib/slide-code-snippet";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,11 @@ Rules:
 - Slides: produce between 5 and 8 slides unless output options restrict slides (if slides disabled, still include minimal structure — follow outputOptions).
 - Practice: exactly 5 questions, mix multiple_choice and short_answer.
 - Use clear, accurate pedagogy for the stated course level and explanation style.
-- If information is insufficient, say so briefly in overview.summary rather than inventing facts.`;
+- If information is insufficient, say so briefly in overview.summary rather than inventing facts.
+- If a slide requires a code example, you MUST include the actual code in the codeSnippet field. Never put a description like "code snippet of X" — put the real working code. For example:
+  BAD:  "codeSnippet": "Code snippet of a factorial function in Python"
+  GOOD: "codeSnippet": "def factorial(n):\\n    if n == 0:\\n        return 1\\n    return n * factorial(n - 1)"
+  The codeSnippet field must always contain valid, runnable code when present. You may still include a markdown code fence inside visualSuggestion for Mermaid or alternate formatting, but codeSnippet must hold the raw source when the slide teaches code.`;
 
 function buildUserPrompt(params: {
   topic: string;
@@ -83,6 +88,8 @@ Return JSON with this exact shape:
       "mainIdea": string,
       "bullets": string[],
       "visualSuggestion": string,
+      "codeSnippet": string (optional; raw source code only, never a prose description),
+      "contentType": "bullets" | "code" | "diagram" | "mixed" (optional),
       "speakerNotes": string,
       "sourceIds": string[]
     }
@@ -185,6 +192,10 @@ export async function POST(req: Request) {
     // Validate sourcesUsed ⊆ selected ids
     const allowed = new Set(selectedSources.map((s) => s.id));
     data.sourcesUsed = (data.sourcesUsed ?? []).filter((id) => allowed.has(id));
+
+    data.slides = sanitizeLessonSlides(
+      Array.isArray(data.slides) ? data.slides : []
+    );
 
     return NextResponse.json({ lesson: data });
   } catch (e) {
