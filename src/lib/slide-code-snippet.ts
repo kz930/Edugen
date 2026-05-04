@@ -3,6 +3,7 @@
  */
 
 import type { SlideContent } from "@/types/lesson";
+import { sanitizeSlideVisual } from "@/lib/sanitize-slide-visual";
 
 /** Plain English one-liner often returned instead of fenced code */
 export function isLikelyProseDescription(str: string): boolean {
@@ -93,7 +94,7 @@ export function sanitizeSlideContent(slide: SlideContent, context?: string): Sli
     out.contentType = "bullets";
   }
 
-  return out;
+  return sanitizeSlideVisual(out, ctx);
 }
 
 export function sanitizeLessonSlides(slides: SlideContent[]): SlideContent[] {

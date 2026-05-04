@@ -35,11 +35,12 @@ export async function POST(req: Request) {
           role: "system",
           content: `You revise one lesson slide. Output JSON matching SlideContent shape only.
 If the slide needs code, put the actual source in "codeSnippet" (raw code with \\n newlines). Never use a sentence like "Code snippet of…" — only real runnable code.
-Optional fields: "codeSnippet" (string), "contentType" ("bullets"|"code"|"diagram"|"mixed").`,
+Optional fields: "codeSnippet" (string), "contentType" ("bullets"|"code"|"diagram"|"mixed").
+Regenerate this slide and include a "visual" visual storyboard when the concept is algorithmic, spatial, mathematical, or process-based. For graph algorithms (BFS/DFS/Dijkstra): small graph (about 5–7 nodes), full nodes/edges/steps; each step needs title, narration, and a subtitle that states exactly what changed visually; narration must match that step's actions (queue/stack/visited/distances). Omit "visual" only when text-only is clearer.`,
         },
         {
           role: "user",
-          content: `Topic: ${topic}\nLesson: ${lessonTitle}\nSlide number: ${slideNumber}\nNotes:\n${uploadedText}\nSources:\n${srcContext}\nReturn JSON: {"slideNumber": number, "title": string, "mainIdea": string, "bullets": string[], "visualSuggestion": string, "speakerNotes": string, "sourceIds": string[], "codeSnippet"?: string, "contentType"?: string}`,
+          content: `Topic: ${topic}\nLesson: ${lessonTitle}\nSlide number: ${slideNumber}\nNotes:\n${uploadedText}\nSources:\n${srcContext}\nReturn JSON: {"slideNumber": number, "title": string, "mainIdea": string, "bullets": string[], "visualSuggestion": string, "speakerNotes": string, "sourceIds": string[], "codeSnippet"?: string, "contentType"?: string, "visual"?: object}`,
         },
       ],
       temperature: 0.5,

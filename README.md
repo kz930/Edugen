@@ -6,7 +6,7 @@ Edugen is an AI-powered study platform that helps students who are stuck on diff
 
 - **Next.js 14** (App Router) + **TypeScript** + **React**
 - **Tailwind CSS** + **Radix UI**-style primitives (`tailwindcss-animate`, `class-variance-authority`)
-- **OpenAI API** for lesson JSON generation, short-answer grading, slide regeneration, and “explain again”
+- **OpenAI API** for lesson JSON, short-answer grading, slide regeneration, “explain again”, and **slide video narration (TTS)**
 - **Tavily API** for web search (only search backend in this project)
 - **pdf-parse** for PDF text extraction on the server
 - **Optional MySQL** (`mysql2`) for lesson persistence via `/api/lessons` — still **mirrors to `localStorage`** in the browser
@@ -30,7 +30,11 @@ Create `.env.local` in the project root (never commit secrets). Copy from `.env.
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENAI_API_KEY` | **Required** for generating lessons, grading short answers, regenerating slides, explain-again |
+| `OPENAI_API_KEY` | **Required** for generating lessons, grading short answers, regenerating slides, explain-again, and **default slide-video TTS** |
+| `AUDIO_TTS_PROVIDER` | Optional: `openai` (default if both keys exist) or `elevenlabs` for video narration audio |
+| `OPENAI_TTS_MODEL` | Optional: OpenAI speech model (default `tts-1`; `tts-1-hd` is higher quality) |
+| `OPENAI_TTS_VOICE` | Optional: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer` (default `nova`) |
+| `ELEVENLABS_API_KEY` | Optional: use with `AUDIO_TTS_PROVIDER=elevenlabs` for video narration |
 | `TAVILY_API_KEY` | **Required** for online search (unless the user turns search off and uses notes only) |
 | `OPENAI_MODEL` | Optional override (default `gpt-4o-mini`) |
 | `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Optional: server-side lesson storage (see **MySQL** below) |
@@ -103,7 +107,6 @@ Open [http://localhost:3000](http://localhost:3000).
 
 - User accounts and cloud-first persistence  
 - Streaming generation UX  
-- Optional ElevenLabs / OpenAI TTS audio files  
 - Stricter citation verification pipeline  
 
 ## Scripts

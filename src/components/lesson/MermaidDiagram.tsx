@@ -1,6 +1,7 @@
 "use client";
 
 import mermaid from "mermaid";
+import { normalizeMermaidInput } from "@/lib/mermaid-sanitize";
 import { useEffect, useId, useRef } from "react";
 
 let mermaidLastTheme: "dark" | "neutral" | null = null;
@@ -41,12 +42,13 @@ export function MermaidDiagram({
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || !chart.trim()) return;
+    const chartClean = normalizeMermaidInput(chart);
+    if (!el || !chartClean.trim()) return;
     const id = `edugen-mmd-${reactId}-${slideKey}`.replace(/[^a-zA-Z0-9_-]/g, "-");
     let cancelled = false;
     el.innerHTML = "";
     mermaid
-      .render(id, chart)
+      .render(id, chartClean)
       .then(({ svg }) => {
         if (!cancelled && el) {
           el.innerHTML = svg;
@@ -63,10 +65,13 @@ export function MermaidDiagram({
           }
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[MermaidDiagram] render failed:", err);
+        }
         if (!cancelled && el) {
           el.innerHTML =
-            '<p class="text-center text-sm text-slate-400 px-3">Could not render diagram from this slide content.</p>';
+            '<p class="text-center text-sm text-slate-400 px-3">Could not render this diagram — invalid Mermaid syntax. Start with <span class="font-mono text-slate-300">flowchart TB</span> or <span class="font-mono text-slate-300">graph LR</span>, or wrap only the diagram in a fenced <span class="font-mono text-slate-300">mermaid</span> markdown block.</p>';
         }
       });
     return () => {

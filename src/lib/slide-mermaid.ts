@@ -1,4 +1,8 @@
 import type { SlideContent } from "@/types/lesson";
+import {
+  looksLikeMermaidDiagram,
+  normalizeMermaidInput,
+} from "@/lib/mermaid-sanitize";
 import { getEffectiveCodeSnippet } from "@/lib/slide-code-snippet";
 
 export type SlideVisualPlan =
@@ -30,17 +34,16 @@ export function visualPlanToRemotionDiagram(plan: SlideVisualPlan): RemotionDiag
  * Decide how to visualize the slide: user-authored Mermaid, auto React Flow, or placeholder.
  */
 export function getSlideVisualPlan(slide: SlideContent): SlideVisualPlan {
-  const rawVisual = (slide.visualIdea ?? slide.visualSuggestion)?.trim() ?? "";
-  if (
-    /^(flowchart|graph|sequenceDiagram|mindmap|stateDiagram|erDiagram|classDiagram)/i.test(
-      rawVisual
-    )
-  ) {
-    return { type: "mermaid", source: rawVisual };
+  const rawFromSlide = (slide.visualIdea ?? slide.visualSuggestion)?.trim() ?? "";
+  const normalizedDiagram = normalizeMermaidInput(rawFromSlide);
+
+  if (looksLikeMermaidDiagram(normalizedDiagram)) {
+    return { type: "mermaid", source: normalizedDiagram };
   }
 
   const bullets = slide.bullets.filter(Boolean);
-  const haystack = `${slide.mainIdea} ${bullets.join(" ")} ${rawVisual}`.toLowerCase();
+  const haystack =
+    `${slide.mainIdea} ${bullets.join(" ")} ${rawFromSlide}`.toLowerCase();
 
   const processy =
     /step|flow|first|then|next|process|loop|recursive|call|chain|order|sequence|pipeline|stages?/i.test(
@@ -59,8 +62,8 @@ export function getSlideVisualPlan(slide: SlideContent): SlideVisualPlan {
   }
   if (
     bullets.length >= 2 &&
-    rawVisual.length > 15 &&
-    /diagram|chart|map|tree|hierarchy/i.test(rawVisual + haystack)
+    rawFromSlide.length > 15 &&
+    /diagram|chart|map|tree|hierarchy/i.test(rawFromSlide + haystack)
   ) {
     return { type: "flow", mode: "linear", labels: bullets };
   }

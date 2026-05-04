@@ -1,41 +1,66 @@
-import { getAudioDurationInSeconds } from "@remotion/media-utils";
+import { getLocalAudioDurationSeconds } from "@/lib/audio-duration";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-const DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM";
+const DEFAULT_ELEVEN_VOICE = "21m00Tcm4TlvDq8ikWAM";
+const OPENAI_TTS_MAX_CHARS = 4096;
 
-export async function POST(req: Request) {
-  let body: { text?: string; slideIndex?: number };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+type TtsProvider = "openai" | "elevenlabs";
 
-  const text = typeof body.text === "string" ? body.text.trim() : "";
-  const slideIndex = Number(body.slideIndex);
-  if (!text) {
-    return NextResponse.json({ error: "text is required" }, { status: 400 });
+function resolveTtsProvider(): TtsProvider {
+  const explicit = process.env.AUDIO_TTS_PROVIDER?.trim().toLowerCase();
+  if (explicit === "openai" || explicit === "elevenlabs") {
+    return explicit;
   }
-  if (!Number.isInteger(slideIndex) || slideIndex < 1 || slideIndex > 500) {
-    return NextResponse.json({ error: "slideIndex invalid" }, { status: 400 });
-  }
+  const hasOpenAI = Boolean(process.env.OPENAI_API_KEY?.trim());
+  const hasEleven = Boolean(process.env.ELEVENLABS_API_KEY?.trim());
+  if (hasOpenAI && !hasEleven) return "openai";
+  if (!hasOpenAI && hasEleven) return "elevenlabs";
+  if (hasOpenAI && hasEleven) return "openai";
+  return "openai";
+}
 
-  const apiKey = process.env.ELEVENLABS_API_KEY;
+async function synthesizeOpenAI(text: string): Promise<Buffer> {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+  const model = process.env.OPENAI_TTS_MODEL?.trim() || "tts-1";
+  const voice = process.env.OPENAI_TTS_VOICE?.trim() || "nova";
+  const input = text.slice(0, OPENAI_TTS_MAX_CHARS);
+
+  const res = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      voice,
+      input,
+      response_format: "mp3",
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText.slice(0, 800));
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function synthesizeElevenLabs(text: string): Promise<Buffer> {
+  const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "ELEVENLABS_API_KEY is not configured" },
-      { status: 500 }
-    );
+    throw new Error("ELEVENLABS_API_KEY is not set");
   }
-
-  const voiceId =
-    process.env.ELEVENLABS_VOICE_ID?.trim() || DEFAULT_VOICE;
-
+  const voiceId = process.env.ELEVENLABS_VOICE_ID?.trim() || DEFAULT_ELEVEN_VOICE;
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+
   const elevenRes = await fetch(url, {
     method: "POST",
     headers: {
@@ -55,16 +80,69 @@ export async function POST(req: Request) {
 
   if (!elevenRes.ok) {
     const errText = await elevenRes.text();
+    throw new Error(errText.slice(0, 800));
+  }
+  return Buffer.from(await elevenRes.arrayBuffer());
+}
+
+export async function POST(req: Request) {
+  let body: { text?: string; slideIndex?: number };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  const slideIndex = Number(body.slideIndex);
+  if (!text) {
+    return NextResponse.json({ error: "text is required" }, { status: 400 });
+  }
+  if (!Number.isInteger(slideIndex) || slideIndex < 1 || slideIndex > 500) {
+    return NextResponse.json({ error: "slideIndex invalid" }, { status: 400 });
+  }
+
+  const provider = resolveTtsProvider();
+  let buf: Buffer;
+
+  try {
+    if (provider === "openai") {
+      if (!process.env.OPENAI_API_KEY?.trim()) {
+        return NextResponse.json(
+          {
+            error: "OpenAI TTS selected but OPENAI_API_KEY is not set",
+            detail:
+              "Set OPENAI_API_KEY in .env.local, or set AUDIO_TTS_PROVIDER=elevenlabs to use ElevenLabs.",
+          },
+          { status: 500 }
+        );
+      }
+      buf = await synthesizeOpenAI(text);
+    } else {
+      if (!process.env.ELEVENLABS_API_KEY?.trim()) {
+        return NextResponse.json(
+          {
+            error: "ElevenLabs TTS selected but ELEVENLABS_API_KEY is not set",
+            detail:
+              "Set ELEVENLABS_API_KEY, or set AUDIO_TTS_PROVIDER=openai and OPENAI_API_KEY to use OpenAI speech.",
+          },
+          { status: 500 }
+        );
+      }
+      buf = await synthesizeElevenLabs(text);
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const label = provider === "openai" ? "OpenAI TTS" : "ElevenLabs";
     return NextResponse.json(
       {
-        error: "ElevenLabs request failed",
-        detail: errText.slice(0, 500),
+        error: `${label} request failed`,
+        detail: message,
       },
-      { status: elevenRes.status >= 400 ? elevenRes.status : 502 }
+      { status: 502 }
     );
   }
 
-  const buf = Buffer.from(await elevenRes.arrayBuffer());
   const outDir = path.join(process.cwd(), "public", "generated");
   await mkdir(outDir, { recursive: true });
   const filename = `audio-${slideIndex}.mp3`;
@@ -72,17 +150,14 @@ export async function POST(req: Request) {
   await writeFile(absPath, buf);
 
   let durationInSeconds = 10;
-  try {
-    durationInSeconds = await getAudioDurationInSeconds(absPath);
-    if (!Number.isFinite(durationInSeconds) || durationInSeconds <= 0) {
-      durationInSeconds = 10;
-    }
-  } catch {
-    durationInSeconds = 10;
+  const fromMeta = await getLocalAudioDurationSeconds(absPath);
+  if (fromMeta != null) {
+    durationInSeconds = Math.max(1, fromMeta + 0.35);
   }
 
   return NextResponse.json({
     audioUrl: `/generated/${filename}`,
     durationInSeconds,
+    provider,
   });
 }

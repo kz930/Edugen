@@ -15,6 +15,13 @@ import {
 } from "./LessonVideoThemeContext";
 import { SlideFlowAnimation, type VideoDiagramPlan } from "./SlideFlowAnimation";
 import { looksLikeCode } from "@/lib/slide-code-snippet";
+import { deriveGraphVisualState } from "@/lib/graph-visual-state";
+import {
+  graphStepCharWeights,
+  graphStepIndexAtTime,
+} from "@/lib/graph-video-sync";
+import type { GraphVisualSlide } from "@/types/visual-slide";
+import { SlideGraphVideo } from "./SlideGraphVideo";
 
 export type SlideVideoProps = {
   title: string;
@@ -26,6 +33,8 @@ export type SlideVideoProps = {
   themeName: PreviewThemeId;
   /** Raw code only; prose placeholders are ignored (same rules as slide preview). */
   codeSnippet?: string;
+  /** Graph algorithm storyboard (same as slide preview) — rendered as SVG in video. */
+  graphVisual?: GraphVisualSlide | null;
 };
 
 function SlideVideoBody({
@@ -36,6 +45,7 @@ function SlideVideoBody({
   narrationScript,
   diagramPlan,
   codeSnippet,
+  graphVisual,
 }: Omit<SlideVideoProps, "themeName">) {
   const theme = useRemotionLessonTheme();
   const frame = useCurrentFrame();
@@ -52,15 +62,47 @@ function SlideVideoBody({
     segments.length - 1,
     Math.max(0, Math.floor(t / segDur))
   );
-  const subtitle = segments[segIdx] ?? "";
+
+  const hasGraph =
+    graphVisual != null &&
+    graphVisual.kind === "graph" &&
+    (graphVisual.steps?.length ?? 0) > 0;
+
+  const graphWeights = useMemo(
+    () =>
+      hasGraph && graphVisual ? graphStepCharWeights(graphVisual) : [],
+    [hasGraph, graphVisual]
+  );
+
+  const graphStepIdx =
+    hasGraph && graphWeights.length > 0
+      ? graphStepIndexAtTime(t, durationInSeconds, graphWeights)
+      : 0;
+
+  const graphDerived = useMemo(() => {
+    if (!hasGraph || !graphVisual) return null;
+    return deriveGraphVisualState(graphVisual.steps, graphStepIdx);
+  }, [hasGraph, graphVisual, graphStepIdx]);
+
+  const graphStepMeta = hasGraph ? graphVisual!.steps[graphStepIdx] : null;
+
+  /** Match subtitles to spoken tutor copy: full step narration (what TTS says for this slice). */
+  const subtitle = hasGraph
+    ? (graphStepMeta?.narration?.trim() ||
+        graphStepMeta?.subtitle?.trim() ||
+        segments[segIdx] ||
+        "")
+    : segments[segIdx] ?? "";
 
   const effectiveCode =
     codeSnippet?.trim() && looksLikeCode(codeSnippet.trim())
       ? codeSnippet.trim()
       : null;
 
-  const showCodePanel = Boolean(effectiveCode);
-  const showFlowDiagram = diagramPlan.type === "flow" && !showCodePanel;
+  const showGraphPanel = Boolean(hasGraph);
+  const showCodePanel = Boolean(effectiveCode && !showGraphPanel);
+  const showFlowDiagram =
+    diagramPlan.type === "flow" && !showGraphPanel && !showCodePanel;
 
   const titleFont = themeFontStack("fontTitle", theme);
   const bodyFont = themeFontStack("fontBody", theme);
@@ -134,7 +176,7 @@ function SlideVideoBody({
           fontSize: 48,
           fontWeight: 700,
           color: theme.textPrimary,
-          marginBottom: showFlowDiagram || showCodePanel ? 20 : 32,
+          marginBottom: showFlowDiagram || showCodePanel || showGraphPanel ? 20 : 32,
           marginTop: 8,
           fontFamily: titleFont,
         }}
@@ -142,7 +184,81 @@ function SlideVideoBody({
         {title}
       </h1>
 
-      {showFlowDiagram ? (
+      {showGraphPanel && graphVisual ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 36,
+            alignItems: "flex-start",
+            marginTop: 8,
+          }}
+        >
+          <div style={{ flex: "1 1 50%", minWidth: 0, maxWidth: "52%" }}>
+            {bulletBlock(true)}
+          </div>
+          <div
+            style={{
+              flex: "0 0 46%",
+              minHeight: 440,
+              position: "relative",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              backgroundColor: theme.bgSecondary,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+            }}
+          >
+            <SlideGraphVideo
+              visual={graphVisual}
+              stepIndex={graphStepIdx}
+              width={540}
+              height={400}
+              theme={theme}
+            />
+            {graphDerived ? (
+              <div
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  fontSize: 15,
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  color: theme.textMuted,
+                  borderTop: `1px solid ${theme.border}`,
+                  lineHeight: 1.45,
+                }}
+              >
+                {graphVisual.algorithm === "bfs" ? (
+                  <span>Queue (→): [{graphDerived.queue.join(", ") || " "}]</span>
+                ) : null}
+                {graphVisual.algorithm === "dfs" ? (
+                  <span>Stack (↑): [{graphDerived.stack.join(", ") || " "}]</span>
+                ) : null}
+                {graphVisual.algorithm === "generic" ? (
+                  <span>
+                    Q: [{graphDerived.queue.join(", ") || " "}] · S: [
+                    {graphDerived.stack.join(", ") || " "}]
+                  </span>
+                ) : null}
+                {graphVisual.algorithm === "dijkstra" ? (
+                  <span>
+                    {" "}
+                    Dist:{" "}
+                    {Object.keys(graphDerived.distances).length
+                      ? Object.entries(graphDerived.distances)
+                          .map(([k, v]) => `${k}:${v}`)
+                          .join(" ")
+                      : "—"}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : showFlowDiagram ? (
         <div
           style={{
             display: "flex",
@@ -217,14 +333,16 @@ function SlideVideoBody({
           right: 60,
           backgroundColor: theme.bgSecondary,
           borderRadius: 8,
-          padding: "12px 20px",
+          padding: "14px 22px",
+          maxHeight: hasGraph ? 140 : undefined,
+          overflow: hasGraph ? "hidden" : undefined,
           border: `1px solid ${theme.border}`,
         }}
       >
         <p
           style={{
             color: theme.textPrimary,
-            fontSize: 22,
+            fontSize: hasGraph ? 17 : 22,
             margin: 0,
             textAlign: "center",
             lineHeight: 1.35,

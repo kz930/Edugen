@@ -7,6 +7,7 @@ import type {
   RetrievedSource,
   SlideContent,
 } from "@/types/lesson";
+import { isGraphVisual } from "@/types/visual-slide";
 import { SlidesEditorSection } from "@/components/lesson/SlidesEditorSection";
 import { EDITOR_PAGE_BG, type PreviewThemeId } from "@/config/lesson-editor-ui";
 import {
@@ -35,6 +36,7 @@ import {
 } from "@/lib/export-markdown";
 import { saveLessonRecord } from "@/lib/storage";
 import { upsertMysqlLesson } from "@/lib/mysql-lessons-client";
+import { getEffectiveVideoNarrationScript } from "@/lib/graph-video-sync";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -45,8 +47,6 @@ import {
   Layers,
   Link2,
   Loader2,
-  Play,
-  RefreshCw,
   Save,
   Sparkles,
   Square,
@@ -98,10 +98,6 @@ function LessonWorkspaceInner({
   const { themeName } = useLessonTheme();
   const [section, setSection] = useState<Section>("slides");
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
-  const [density, setDensity] = useState<"comfortable" | "compact">(
-    "comfortable"
-  );
-
   const persist = useCallback(async () => {
     saveLessonRecord(lesson);
     const mysql = await upsertMysqlLesson(lesson);
@@ -235,8 +231,7 @@ function LessonWorkspaceInner({
         ) : (
           <main
             className={cn(
-              "min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6",
-              density === "compact" && "text-sm"
+              "min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6"
             )}
           >
             <div className="mx-auto max-w-4xl space-y-6">
@@ -427,23 +422,35 @@ type VideoGenState =
 
 async function runSlideVideoPipeline(
   slideNumber: number,
-  script: string,
   slide: SlideContent,
+  lessonNarrationScript: string,
   themeName: PreviewThemeId,
   onPhase: (phase: "audio" | "video") => void
-): Promise<{ ok: true; videoUrl: string } | { ok: false; message: string }> {
+): Promise<
+  | {
+      ok: true;
+      videoUrl: string;
+      scriptUsed: string;
+      durationInSeconds: number;
+    }
+  | { ok: false; message: string }
+> {
+  const scriptUsed = getEffectiveVideoNarrationScript(
+    slide,
+    lessonNarrationScript
+  );
   try {
     onPhase("audio");
     const audioRes = await fetch("/api/generate-audio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: script, slideIndex: slideNumber }),
+      body: JSON.stringify({ text: scriptUsed, slideIndex: slideNumber }),
     });
     const audioData = await audioRes.json();
     if (!audioRes.ok) {
       throw new Error(audioData.error ?? "Audio generation failed");
     }
-    const { audioUrl, durationInSeconds } = audioData as {
+    const { audioUrl, durationInSeconds: audioDurGuess } = audioData as {
       audioUrl: string;
       durationInSeconds?: number;
     };
@@ -462,11 +469,12 @@ async function runSlideVideoPipeline(
         codeSnippet: slide.codeSnippet,
         audioUrl,
         durationInSeconds:
-          typeof durationInSeconds === "number" && durationInSeconds > 0
-            ? durationInSeconds
-            : 10,
-        narrationScript: script,
+          typeof audioDurGuess === "number" && audioDurGuess > 0
+            ? audioDurGuess
+            : 30,
+        narrationScript: scriptUsed,
         themeName,
+        visual: slide.visual ?? undefined,
       }),
     });
     const renderData = await renderRes.json();
@@ -477,8 +485,25 @@ async function runSlideVideoPipeline(
         typeof renderData.error === "string" ? renderData.error : "Video render failed";
       throw new Error(detail ? `${err}: ${detail}` : err);
     }
-    const { videoUrl } = renderData as { videoUrl: string };
-    return { ok: true, videoUrl };
+    const { videoUrl, durationInSeconds: renderDur } = renderData as {
+      videoUrl: string;
+      durationInSeconds?: number;
+    };
+    const durationInSeconds =
+      typeof renderDur === "number" &&
+      Number.isFinite(renderDur) &&
+      renderDur > 0
+        ? renderDur
+        : typeof audioDurGuess === "number" && audioDurGuess > 0
+          ? audioDurGuess
+          : 10;
+
+    return {
+      ok: true,
+      videoUrl,
+      scriptUsed,
+      durationInSeconds,
+    };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Something went wrong.";
     return { ok: false, message };
@@ -496,10 +521,39 @@ function VideoSection({
   const narr = lesson.lessonData.narration;
   const slides = lesson.lessonData.slides;
   const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+
+  const hydratedVideos = useMemo(() => {
+    const urls = lesson.lessonData.slideVideoUrls;
+    if (!urls) return {};
+    const o: Record<number, VideoGenState> = {};
+    for (const [k, url] of Object.entries(urls)) {
+      const n = Number(k);
+      if (Number.isInteger(n) && url) {
+        o[n] = { status: "done", videoUrl: url };
+      }
+    }
+    return o;
+  }, [lesson.lessonData.slideVideoUrls]);
+
+  const [videoBySlide, setVideoBySlide] =
+    useState<Record<number, VideoGenState>>(hydratedVideos);
+
+  useEffect(() => {
+    setVideoBySlide((prev) => {
+      const next = { ...prev };
+      for (const [k, url] of Object.entries(lesson.lessonData.slideVideoUrls ?? {})) {
+        const n = Number(k);
+        if (!Number.isInteger(n) || !url) continue;
+        const cur = next[n];
+        if (!cur || cur.status === "idle") {
+          next[n] = { status: "done", videoUrl: url };
+        }
+      }
+      return next;
+    });
+  }, [lesson.lessonData.slideVideoUrls, lesson.id]);
+
   const [playing, setPlaying] = useState<number | null>(null);
-  const [videoBySlide, setVideoBySlide] = useState<Record<number, VideoGenState>>(
-    {}
-  );
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchLabel, setBatchLabel] = useState<string | null>(null);
 
@@ -563,8 +617,8 @@ function VideoSection({
 
       const result = await runSlideVideoPipeline(
         n.slideNumber,
-        n.script,
         slide,
+        n.script,
         themeName,
         (phase) => {
           setVideoBySlide((prev) => ({ ...prev, [n.slideNumber]: { status: phase } }));
@@ -588,6 +642,33 @@ function VideoSection({
         ...prev,
         [n.slideNumber]: { status: "done", videoUrl: result.videoUrl },
       }));
+      setLesson((prev) => {
+        const updated: LessonRecord = {
+          ...prev,
+          lessonData: {
+            ...prev.lessonData,
+            slideVideoUrls: {
+              ...(prev.lessonData.slideVideoUrls ?? {}),
+              [String(n.slideNumber)]: result.videoUrl,
+            },
+            narration: prev.lessonData.narration.map((entry) =>
+              entry.slideNumber === n.slideNumber
+                ? {
+                    ...entry,
+                    script: result.scriptUsed,
+                    estimatedDurationSeconds: Math.max(
+                      1,
+                      Math.round(result.durationInSeconds)
+                    ),
+                  }
+                : entry
+            ),
+          },
+        };
+        saveLessonRecord(updated);
+        void upsertMysqlLesson(updated);
+        return updated;
+      });
     }
 
     setBatchRunning(false);
@@ -616,6 +697,16 @@ function VideoSection({
           <CardDescription>
             One pass: ElevenLabs audio and Remotion video for each slide that has
             subtitle script below. This can take several minutes locally.
+            {narr.some((e) => {
+              const s = slides.find((x) => x.slideNumber === e.slideNumber);
+              return s != null && isGraphVisual(s.visual ?? null);
+            }) ? (
+              <span className="mt-2 block text-amber-800 dark:text-amber-200">
+                Slides with a <strong>graph</strong> use each step&apos;s built-in
+                narration for the voiceover and on-screen text so the tutor matches
+                the animation — not only the script field below.
+              </span>
+            ) : null}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">

@@ -24,7 +24,80 @@ Rules:
 - If a slide requires a code example, you MUST include the actual code in the codeSnippet field. Never put a description like "code snippet of X" — put the real working code. For example:
   BAD:  "codeSnippet": "Code snippet of a factorial function in Python"
   GOOD: "codeSnippet": "def factorial(n):\\n    if n == 0:\\n        return 1\\n    return n * factorial(n - 1)"
-  The codeSnippet field must always contain valid, runnable code when present. You may still include a markdown code fence inside visualSuggestion for Mermaid or alternate formatting, but codeSnippet must hold the raw source when the slide teaches code.`;
+  The codeSnippet field must always contain valid, runnable code when present. You may still include a markdown code fence inside visualSuggestion for Mermaid or alternate formatting, but codeSnippet must hold the raw source when the slide teaches code.
+
+NARRATION SCRIPTS ("narration": [{ "slideNumber", "script", "estimatedDurationSeconds" }]) — MUST match what appears on that slide in the video:
+- Scripts are read aloud verbatim and shown as subtitles (split by sentences). They must describe exactly what the learner sees on that slide at that moment — not a generic course intro.
+- If the slide has slide.visual with kind "graph": the script MUST walk through the SAME graph storyboard as visual.steps. Explain each phase in order: name nodes and edges by label, say how the queue/stack/priority queue evolves, call out relaxations and distance updates with the numbers shown. Do NOT write a vague overview ("here we visualize a graph") while the animation shows Dijkstra/BFS steps — the learner must hear the same progression as visual.steps[].narration (you may merge steps into flowing prose, but content must be concrete and algorithm-specific).
+- If the slide has codeSnippet (real code): the script MUST walk through that code in execution order — initialize structure, main loop, relaxation/update, termination. Reference real identifiers from the snippet (function names, heapq, distances dict, etc.) so subtitles align with the code listing.
+- Otherwise: tie clearly to bullets and mainIdea.
+
+VISUALIZATION — WHEN TO SET slide.visual:
+Detect topics that need animated or structured visuals (not plain text). Include slide.visual when teaching any of:
+- Graph algorithms: BFS, DFS, Dijkstra, other traversals on graphs/trees
+- Graphs and trees (structure, traversal order)
+- Recursion (call stack / recursion tree when helpful)
+- Sorting algorithms (comparisons, partitions, invariant snapshots)
+- Linked lists (pointer/reassignment steps)
+- Dynamic programming (table filling, state transitions)
+- Finite state machines / automata (states and transitions)
+- Probability trees, decision trees
+- Geometry (figures, constructions when steppable)
+- Linear algebra (vectors, transformations — equation visual or diagram description)
+- System design / pipelines / flows (diagram kind)
+
+If the slide is purely conceptual prose with no steppable visual, omit "visual".
+
+FOR EVERY slide.visual ON GRAPH ALGORITHMS (kind "graph"), ALL of the following are mandatory:
+- graph.nodes and graph.edges (every edge id must connect existing node ids)
+- When traversal starts from one vertex, make that clear in early steps (mark_current / enqueue / push_stack as appropriate)
+- steps[]: every step must include id, title, narration, subtitle, and actions[]
+- Every step MUST have a subtitle that states exactly what changed on screen (no vague lines like "BFS uses a queue" or "We continue traversing")
+- Every step MUST have narration that describes the same moment as the actions (spoken explanation aligned with queue/stack/visited/distances)
+- Surface algorithm state with actions: queue (BFS), stack or recursion path (DFS), visited via mark_visited, distances via update_distance (Dijkstra). Use set_note for traversal order summaries when helpful.
+
+PEDAGOGY:
+- Assume the learner has never seen the algorithm before: short titles, concrete subtitles, one main idea per step.
+- Prefer SMALL graphs: typically 5–7 nodes unless the user explicitly needs more. Never output huge graphs.
+
+ALGORITHM-SPECIFIC EMPHASIS:
+- BFS: show queue front-to-back evolution clearly (enqueue/dequeue/mark_visited/highlight_edge for expansion).
+- DFS: show stack pushes/pops OR recursion depth clearly; show backtracking when relevant.
+- Dijkstra: weighted edges when needed; show current node, relaxations via update_distance, settled vs tentative clearly in narration/subtitles.
+
+GRAPH JSON SHAPE (kind "graph"):
+  "visual": {
+    "kind": "graph",
+    "algorithm": "bfs" | "dfs" | "dijkstra" | "generic",
+    "graph": {
+      "nodes": [{ "id": string, "label": string }],
+      "edges": [{ "id": string, "source": string, "target": string, "label"?: string, "weight"?: number, "directed"?: boolean }]
+    },
+    "steps": [{
+      "id": string,
+      "title": string,
+      "narration": string,
+      "subtitle": string,
+      "actions": [
+        { "type": "highlight_node", "nodeId": string },
+        { "type": "highlight_edge", "edgeId": string },
+        { "type": "mark_visited", "nodeId": string },
+        { "type": "mark_current", "nodeId": string },
+        { "type": "enqueue", "nodeId": string },
+        { "type": "dequeue", "nodeId": string },
+        { "type": "push_stack", "nodeId": string },
+        { "type": "pop_stack", "nodeId": string },
+        { "type": "update_distance", "nodeId": string, "distance": number },
+        { "type": "set_note", "text": string }
+      ]
+    }]
+  }
+
+OTHER VISUAL KINDS (when graph structure is not the main point):
+- "diagram": { "kind": "diagram", "title"?: string, "description"?: string } — flows, high-level architecture, simple scenes
+- "equation": { "kind": "equation", "expression"?: string, "desmosExpression"?: string } — key formulas
+
+If a slide does not need a visual storyboard, omit "visual" entirely.`;
 
 function buildUserPrompt(params: {
   topic: string;
@@ -67,6 +140,8 @@ ${params.uploadedText.slice(0, 12000)}
 Selected sources:
 ${srcBlock || "(none)"}
 
+Before returning JSON, review slides whose topics appear in the VISUALIZATION list in SYSTEM: include a rich slide.visual with beginner-friendly steps; subtitles must be concrete (what moved, highlighted, enqueued, or updated — never generic); narration must match the same step's actions. Use at most ~7 nodes per graph unless the topic demands more.
+
 Return JSON with this exact shape:
 {
   "lessonTitle": string,
@@ -90,6 +165,7 @@ Return JSON with this exact shape:
       "visualSuggestion": string,
       "codeSnippet": string (optional; raw source code only, never a prose description),
       "contentType": "bullets" | "code" | "diagram" | "mixed" (optional),
+      "visual": optional graph/diagram/equation visual storyboard (see SYSTEM instructions),
       "speakerNotes": string,
       "sourceIds": string[]
     }

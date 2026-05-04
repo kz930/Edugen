@@ -76,6 +76,8 @@ export interface LessonBlueprint {
   practiceGoals?: string[];
 }
 
+import type { VisualSlide } from "./visual-slide";
+
 export type SlideContentKind = "bullets" | "code" | "diagram" | "mixed";
 
 export interface SlideContent {
@@ -90,6 +92,11 @@ export interface SlideContent {
   codeSnippet?: string;
   /** Optional hint from generation; invalid code degrades to bullets during sanitization. */
   contentType?: SlideContentKind;
+  /**
+   * Structured visual storyboard (graph algorithm steps, diagram placeholder, equation).
+   * When present and valid, the slide viewer prioritizes this over static diagrams.
+   */
+  visual?: VisualSlide | null;
   speakerNotes: string;
   sourceIds: string[];
 }
@@ -120,6 +127,11 @@ export interface GeneratedLessonData {
   narration: NarrationEntry[];
   practiceQuestions: PracticeQuestion[];
   sourcesUsed: string[];
+  /**
+   * Slide number (string key) → `/generated/video-{n}.mp4` after successful render.
+   * Persisted so the Video tab remembers clips after reload.
+   */
+  slideVideoUrls?: Record<string, string>;
 }
 
 export interface LessonRecord {

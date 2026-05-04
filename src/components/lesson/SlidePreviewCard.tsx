@@ -22,6 +22,8 @@ import { MermaidDiagram } from "@/components/lesson/MermaidDiagram";
 import { SlideFlowDiagram } from "@/components/lesson/SlideFlowDiagram";
 import { SlideRichBody } from "@/components/lesson/SlideRichBody";
 import { SlideCodeBlock } from "@/components/lesson/SlideCodeBlock";
+import { VisualSlideRenderer } from "@/components/lesson/VisualSlideRenderer";
+import { isValidVisualSlide } from "@/lib/validate-visual-slide";
 import {
   BookOpen,
   CheckCircle2,
@@ -82,6 +84,10 @@ export function SlidePreviewCard({
   );
   const effectiveCode = useMemo(() => getEffectiveCodeSnippet(slide), [slide]);
   const codeLang = useMemo(() => inferCodeLanguage(slide), [slide]);
+  const hasStoryboard = useMemo(
+    () => slide.visual != null && isValidVisualSlide(slide.visual),
+    [slide.visual]
+  );
   const [subtitleIdx, setSubtitleIdx] = useState(0);
   const [codeRecovering, setCodeRecovering] = useState(false);
 
@@ -303,7 +309,22 @@ export function SlidePreviewCard({
             </button>
           ) : null}
 
-          {layoutTwoCol ? (
+          {hasStoryboard ? (
+            <div className="mt-8 space-y-10">
+              <VisualSlideRenderer slide={slide} />
+              {slide.mainIdea ? (
+                <div style={{ color: tokens.textMuted }}>
+                  <SlideRichBody
+                    text={slide.mainIdea}
+                    proseClassName="!text-inherit text-lg leading-relaxed md:text-[1.125rem]"
+                  />
+                </div>
+              ) : null}
+              {slide.bullets.length > 0 ? (
+                <ul className="space-y-6">{slide.bullets.map((b, i) => bulletRow(b, i))}</ul>
+              ) : null}
+            </div>
+          ) : layoutTwoCol ? (
             <div className="mt-8 grid gap-10 md:grid-cols-2 md:items-start">
               <div className="min-w-0 space-y-8">
                 {slide.mainIdea ? (
@@ -386,9 +407,11 @@ export function SlidePreviewCard({
             }}
           >
             <p className="text-center text-sm leading-snug md:text-base" style={{ color: tokens.textPrimary }}>
-              {subtitleText || "—"}
+              {hasStoryboard
+                ? "Step subtitles play inside the visual workspace above (synced to each graph frame)."
+                : subtitleText || "—"}
             </p>
-            {segments.length > 1 ? (
+            {!hasStoryboard && segments.length > 1 ? (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
                 <Button
                   type="button"
@@ -414,9 +437,13 @@ export function SlidePreviewCard({
                   Preview subtitles · {subtitleSafe + 1} / {segments.length}
                 </span>
               </div>
-            ) : (
+            ) : !hasStoryboard ? (
               <p className="mt-1 text-center text-[11px]" style={{ color: tokens.textMuted }}>
                 Matches video subtitle timing (one sentence shown per segment).
+              </p>
+            ) : (
+              <p className="mt-1 text-center text-[11px]" style={{ color: tokens.textMuted }}>
+                Visual slides use per-step captions in the panel above instead of narration segments here.
               </p>
             )}
           </div>
